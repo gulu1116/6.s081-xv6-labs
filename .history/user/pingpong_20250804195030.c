@@ -15,7 +15,7 @@ int main(int argc, char const *argv[]) {
 
     // 创建两个管道：
     int fd_c2p[2];
-    int fd_p2c[2];
+    int fd_p2c[2];  // 父进程->子进程的管道
     
     // 创建管道并检查错误
     if (pipe(fd_c2p) < 0 || pipe(fd_p2c) < 0) {
