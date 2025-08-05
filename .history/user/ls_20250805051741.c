@@ -13,13 +13,13 @@ fmtname(char *path)
   // 从路径最后往前找‘/’，找到就是路径和文件名的分界点
   for(p=path+strlen(path); p >= path && *p != '/'; p--)
     ;
-  p++;  // 指向最后一个斜杠后的位置，即文件名的开头
+  p++;
 
   // Return blank-padded name.
   if(strlen(p) >= DIRSIZ)
     return p;
-  memmove(buf, p, strlen(p));  // 拷贝文件名
-  memset(buf+strlen(p), ' ', DIRSIZ-strlen(p));  // 用空格补全
+  memmove(buf, p, strlen(p));
+  memset(buf+strlen(p), ' ', DIRSIZ-strlen(p));
   return buf;
 }
 

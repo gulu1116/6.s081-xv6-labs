@@ -18,8 +18,8 @@ fmtname(char *path)
   // Return blank-padded name.
   if(strlen(p) >= DIRSIZ)
     return p;
-  memmove(buf, p, strlen(p));  // 拷贝文件名
-  memset(buf+strlen(p), ' ', DIRSIZ-strlen(p));  // 用空格补全
+  memmove(buf, p, strlen(p));
+  memset(buf+strlen(p), ' ', DIRSIZ-strlen(p));
   return buf;
 }
 
