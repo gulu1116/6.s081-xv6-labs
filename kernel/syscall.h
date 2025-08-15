@@ -20,3 +20,5 @@
 #define SYS_link   19
 #define SYS_mkdir  20
 #define SYS_close  21
+#define SYS_trace  22 
+#define SYS_sysinfo  23   // 紧随 SYS_trace 之后；确保不与现有冲突
