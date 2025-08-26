@@ -18,6 +18,7 @@ extern char trampoline[]; // trampoline.S
 /*
  * create a direct-map page table for the kernel.
  */
+/*
 void
 kvminit()
 {
@@ -46,6 +47,63 @@ kvminit()
   // the highest virtual address in the kernel.
   kvmmap(TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
 }
+  */
+
+/*
+ * create a direct-map page table for the kernel.
+ */
+void
+kvminit() {
+    kernel_pagetable = (pagetable_t) kalloc();
+    // 一堆映射工作改到了 vminit() 中
+    vminit(kernel_pagetable);
+}
+
+// 新增函数
+void vminit(pagetable_t pagetable) {
+    memset(pagetable, 0, PGSIZE);
+
+    // uart registers
+    vmmap(pagetable, UART0, UART0, PGSIZE, PTE_R | PTE_W);
+
+    // virtio mmio disk interface
+    vmmap(pagetable, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
+
+    if (pagetable == kernel_pagetable) { // 只有内核页表配享太庙 for fix the remap error
+        // CLINT
+        vmmap(pagetable, CLINT, CLINT, 0x10000, PTE_R | PTE_W);
+    }
+
+    // CLINT
+    // vmmap(pagetable, CLINT, CLINT, 0x10000, PTE_R | PTE_W);
+
+    // PLIC
+    vmmap(pagetable, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
+
+    // map kernel text executable and read-only.
+    vmmap(pagetable, KERNBASE, KERNBASE, (uint64) etext - KERNBASE, PTE_R | PTE_X);
+
+    // map kernel data and the physical RAM we'll make use of.
+    vmmap(pagetable, (uint64) etext, (uint64) etext, PHYSTOP - (uint64) etext, PTE_R | PTE_W);
+
+    // map the trampoline for trap entry/exit to
+    // the highest virtual address in the kernel.
+    vmmap(pagetable, TRAMPOLINE, (uint64) trampoline, PGSIZE, PTE_R | PTE_X);
+}
+
+// 新增函数
+int
+vmmap(pagetable_t pagetable, uint64 va, uint64 pa, uint64 sz, int perm) {
+    if (mappages(pagetable, va, sz, pa, perm) != 0) {
+        if(pagetable == kernel_pagetable){
+            panic("vmmap");
+        }
+        return -1;
+    }
+    return 0;
+}
+
+
 
 // Switch h/w page table register to the kernel's page table,
 // and enable paging.
@@ -126,13 +184,13 @@ kvmmap(uint64 va, uint64 pa, uint64 sz, int perm)
 // addresses on the stack.
 // assumes va is page aligned.
 uint64
-kvmpa(uint64 va)
+kvmpa(pagetable_t  pagetable, uint64 va)
 {
   uint64 off = va % PGSIZE;
   pte_t *pte;
   uint64 pa;
   
-  pte = walk(kernel_pagetable, va, 0);
+  pte = walk(pagetable, va, 0);
   if(pte == 0)
     panic("kvmpa");
   if((*pte & PTE_V) == 0)
@@ -376,67 +434,206 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 // Copy from user to kernel.
 // Copy len bytes to dst from virtual address srcva in a given page table.
 // Return 0 on success, -1 on error.
-int
-copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
-{
-  uint64 n, va0, pa0;
+// int
+// copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
+// {
+//   uint64 n, va0, pa0;
 
-  while(len > 0){
-    va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
-    n = PGSIZE - (srcva - va0);
-    if(n > len)
-      n = len;
-    memmove(dst, (void *)(pa0 + (srcva - va0)), n);
+//   while(len > 0){
+//     va0 = PGROUNDDOWN(srcva);
+//     pa0 = walkaddr(pagetable, va0);
+//     if(pa0 == 0)
+//       return -1;
+//     n = PGSIZE - (srcva - va0);
+//     if(n > len)
+//       n = len;
+//     memmove(dst, (void *)(pa0 + (srcva - va0)), n);
 
-    len -= n;
-    dst += n;
-    srcva = va0 + PGSIZE;
-  }
-  return 0;
-}
+//     len -= n;
+//     dst += n;
+//     srcva = va0 + PGSIZE;
+//   }
+//   return 0;
+// }
 
 // Copy a null-terminated string from user to kernel.
 // Copy bytes to dst from virtual address srcva in a given page table,
 // until a '\0', or max.
 // Return 0 on success, -1 on error.
+// int
+// copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
+// {
+//   uint64 n, va0, pa0;
+//   int got_null = 0;
+
+//   while(got_null == 0 && max > 0){
+//     va0 = PGROUNDDOWN(srcva);
+//     pa0 = walkaddr(pagetable, va0);
+//     if(pa0 == 0)
+//       return -1;
+//     n = PGSIZE - (srcva - va0);
+//     if(n > max)
+//       n = max;
+
+//     char *p = (char *) (pa0 + (srcva - va0));
+//     while(n > 0){
+//       if(*p == '\0'){
+//         *dst = '\0';
+//         got_null = 1;
+//         break;
+//       } else {
+//         *dst = *p;
+//       }
+//       --n;
+//       --max;
+//       p++;
+//       dst++;
+//     }
+
+//     srcva = va0 + PGSIZE;
+//   }
+//   if(got_null){
+//     return 0;
+//   } else {
+//     return -1;
+//   }
+// }
+
+
+extern int copyin_new(pagetable_t, char*, uint64, uint64);
+extern int copyinstr_new(pagetable_t, char*, uint64, uint64);
+
+int
+copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
+{
+  return copyin_new(pagetable, dst, srcva, len);
+}
+
 int
 copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 {
-  uint64 n, va0, pa0;
-  int got_null = 0;
+  return copyinstr_new(pagetable, dst, srcva, max);
+}
 
-  while(got_null == 0 && max > 0){
-    va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
-    n = PGSIZE - (srcva - va0);
-    if(n > max)
-      n = max;
 
-    char *p = (char *) (pa0 + (srcva - va0));
-    while(n > 0){
-      if(*p == '\0'){
-        *dst = '\0';
-        got_null = 1;
-        break;
-      } else {
-        *dst = *p;
-      }
-      --n;
-      --max;
-      p++;
-      dst++;
+void
+vmprint_recursive(pagetable_t pagetable, int level) {
+
+    // 按照 xv6-book 书上的规则，三级页表名称，从高地址到低地址（从左到右）依次排列为：L2（又称顶级/根页表）、L1、L0
+    static int levels[] = {0, 2, 1, 0};
+
+    // 每个 PTE 占用 8 字节，共 512 个 PTE
+    for (int i = 0; i < PGSIZE / 8; i++) {
+        pte_t pte = pagetable[i];
+        // 只处理有效的 PTE
+        if (pte & PTE_V) {
+            // 打印缩进
+            for (int j = 0; j < level; j++)
+                printf(" ..");
+
+            // 打印 PTE 的下标值，和其对应的物理地址
+            uint64 pa = PTE2PA(pte);
+            printf("%d: pte %p pa %p\n", i, pte, pa);
+
+            // 额外打印，证明在 xv6 中，第二级和第一级页表的 PTE 都是指向下一级页表的地址，只有最后一个页表的 PTE 指向的是物理内存地址
+            printf("level= %d, is it pgtbl? %s\n", levels[level], ((pte & (PTE_R | PTE_W | PTE_X)) == 0) ? "true" : "false");
+
+            // 如果这个 PTE 指向的是下一级页表，递归打印
+            if ((pte & (PTE_R | PTE_W | PTE_X)) == 0) {
+                // 这是一个指向下一级页表的 PTE
+                vmprint_recursive((pagetable_t) pa, level + 1);
+            } // xv6 中无需考虑第二级和第一级页表项指向物理地址的情况
+        }
     }
+}
 
-    srcva = va0 + PGSIZE;
-  }
-  if(got_null){
+void
+vmprint(pagetable_t pagetable) {
+    printf("page table %p\n", pagetable);
+    vmprint_recursive(pagetable, 1);
+}
+
+
+// 创建一个用户进程的内核页表并完成初始化工作
+pagetable_t
+createukpgtbl() {
+    pagetable_t ukpgtbl = (pagetable_t) kalloc();
+    vminit(ukpgtbl);
+    return ukpgtbl;
+}
+
+// 释放三级页表占用的内存，共 3*4kb
+void freeukpgtbl(pagetable_t pagetable) {
+    // 只释放页表占用内存，但不释放页表项里面的物理内存（因为是共享的）
+    for(int i = 0; i < 512; i++){
+        // level-1 page table entry
+        pte_t l1pte = pagetable[i];
+        if((l1pte & PTE_V) && (l1pte & (PTE_R|PTE_W|PTE_X)) == 0){
+            uint64 l1ptepa = PTE2PA(l1pte);
+            // 释放最后一级页表
+            for(int j = 0; j < 512; j++){
+                // level-0 page table entry
+                pte_t l0pte = ((pagetable_t)l1ptepa)[j];
+                if((l0pte & PTE_V) && (l0pte & (PTE_R|PTE_W|PTE_X)) == 0){
+                    kfree((void*)PTE2PA(l0pte)); // 释放 l0 页表
+                }
+            }
+            kfree((void*)l1ptepa); // 释放 l1 页表
+        }
+    }
+    // level-2 page table
+    kfree(pagetable); // 释放 l2 顶级页表
+}
+
+
+int
+u2kvmcopy(pagetable_t upgtbl, pagetable_t kpgtbl, uint64 begin, uint64 end)
+{
+    pte_t *pte;
+    uint64 pa, i;
+    uint flags;
+
+    for(i = begin; i < end; i += PGSIZE){
+        if((pte = walk(upgtbl, i, 0)) == 0)
+            panic("uvmmap_copy: pte should exist");
+        if((*pte & PTE_V) == 0)
+            panic("uvmmap_copy: page not present");
+        pa = PTE2PA(*pte);
+        // 映射的时候需要去除页表项中的 PTE_U 标志
+        flags = PTE_FLAGS(*pte) & (~PTE_U);
+        if(mappages(kpgtbl, i, PGSIZE, pa, flags) != 0){
+            uvmunmap(kpgtbl, 0, i / PGSIZE, 0);
+            return -1;
+        }
+    }
     return 0;
-  } else {
-    return -1;
+}
+
+
+// 在 vm.c
+int uvm_mirror_to_kpt(pagetable_t kpt, pagetable_t upt, uint64 start, uint64 sz) {
+  uint64 a = PGROUNDDOWN(start);
+  uint64 last = PGROUNDDOWN(start + sz - 1);
+  for (;;) {
+    pte_t *pte = walk(upt, a, 0);
+    if (pte == 0 || (*pte & PTE_V) == 0) return -1;
+    if ((*pte & (PTE_R|PTE_W|PTE_X)) == 0) { // 跳过非叶
+      // 允许存在中间页表
+    } else {
+      uint64 pa = PTE2PA(*pte);
+      int flags = (PTE_FLAGS(*pte) & (PTE_R|PTE_W|PTE_X)) | PTE_V;
+      flags &= ~PTE_U; // 关键：去掉用户位
+      if (mappages(kpt, a, PGSIZE, pa, flags) != 0) return -1;
+    }
+    if (a == last) break;
+    a += PGSIZE;
   }
+  return 0;
+}
+
+void uvm_unmirror_from_kpt(pagetable_t kpt, uint64 start, uint64 sz) {
+  if (sz == 0) return;
+  uint64 a = PGROUNDDOWN(start);
+  uint64 end = PGROUNDUP(start + sz);
+  uvmunmap(kpt, a, (end - a) / PGSIZE, 0); // do_free=0
 }
