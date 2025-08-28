@@ -1,0 +1,36 @@
+Q1. 当发生用户态系统调用时，RISC-V 硬件会做哪些事情？
+RISC-V 硬件保存当前的 用户程序计数器（pc） 到 sepc。
+将 陷阱原因（system call） 写入 scause。
+将 陷阱发生时的虚拟地址 写入 stval（若有的话）。
+将 当前特权级 切换到 S 模式（Supervisor mode）。
+跳转到 stvec 指定的入口地址（即内核的 trap 向量表）。
+Q2. uservec 是什么？它做了哪些事？
+uservec 是 trampoline.S 中的汇编入口，用来处理 从用户态进入内核态 时的第一步操作。
+它的主要工作是：
+保存用户寄存器（通用寄存器 a0-a7, t0-t6, s0-s11 等）到当前进程的内核栈。
+切换到内核页表，保证内核代码和数据可访问。
+调用 C 函数 usertrap() 进入内核的 trap 处理逻辑。
+Q3. usertrap() 和 kerneltrap() 的作用分别是什么？
+usertrap()：处理 来自用户态的 trap（例如系统调用、用户程序非法访问、定时器中断等）。它会：
+判断 trap 类型。
+如果是系统调用，则进入 syscall()。
+如果是异常，则杀掉进程。
+如果是时钟中断，则调度。
+kerneltrap()：处理 来自内核态的 trap（例如在内核执行时发生的时钟中断）。
+Q4. 为什么需要 usertrapret()？它做了什么？
+usertrapret() 负责从内核态返回用户态。
+它会：
+恢复用户寄存器。
+设置 sstatus，确保返回到用户态。
+将 sepc 设置为用户态要继续执行的指令地址。
+跳转到 trampoline 中的 userret 汇编代码，完成真正的切换。
+Q5. trampoline.S 的作用是什么？为什么它要放在高地址？
+trampoline.S 包含进入内核和返回用户态的汇编切换代码。
+它被映射到 高地址虚拟内存（0xFFFFFF... 之类），这样：
+用户页表和内核页表都能在相同的虚拟地址访问 trampoline。
+避免在切换页表时找不到入口代码。
+Q6. 时钟中断是如何引发调度的？
+硬件定时器触发中断 → 进入内核 → 调用 kerneltrap()。
+在 kerneltrap() 中，检查是否为时钟中断。
+如果是，调用 yield() → sched() → scheduler()。
+scheduler() 会切换到另一个可运行的进程，实现调度。

@@ -115,6 +115,25 @@ printf(char *fmt, ...)
 }
 
 void
+backtrace(void)
+{
+  uint64 fp = r_fp();   // 当前帧指针（s0）
+  printf("backtrace:\n");
+
+  // 每个内核栈是一页，判断 fp 是否仍在该页内
+  while (PGROUNDUP(fp) - PGROUNDDOWN(fp) == PGSIZE) {
+    // 返回地址保存在 fp - 8
+    uint64 ret = *(uint64 *)(fp - 8);
+    printf("%p\n", ret);
+    // 上一个帧指针保存在 fp - 16
+    fp = *(uint64 *)(fp - 16);
+    if (fp == 0) // 防御性检查
+      break;
+  }
+}
+
+
+void
 panic(char *s)
 {
   pr.locking = 0;

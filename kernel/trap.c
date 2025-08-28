@@ -77,8 +77,26 @@ usertrap(void)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
-    yield();
+  if(which_dev == 2) {
+    // kernel/trap.c inside usertrap(), in timer branch
+    if (which_dev == 2) {
+      // 原有的时钟处理例如 ticks++ wakeup(&ticks) 等保留
+      // 然后，处理进程级别的 alarm（如果该 trap 是用户态的进程）
+      struct proc *p = myproc();
+      if (p != 0 && p->alarm_interval > 0) {
+        p->ticks_count++;
+        if (p->ticks_count >= p->alarm_interval && p->is_alarming == 0) {
+          // 保存当前用户 trapframe（寄存器/epc 等）
+          memmove(p->alarm_trapframe, p->trapframe, sizeof(struct trapframe));
+          // 修改 trapframe->epc：返回用户时跳转到 handler
+          p->trapframe->epc = (uint64)p->alarm_handler;
+          p->ticks_count = 0;
+          p->is_alarming = 1;
+        }
+      }
+      yield();
+    }
+  }
 
   usertrapret();
 }
