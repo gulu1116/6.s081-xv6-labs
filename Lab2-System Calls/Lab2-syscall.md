@@ -173,9 +173,9 @@ $ trace 2 usertests forkforkfork
 
 输出形如官方所示即通过（pid 可能不同）。
 
-![alt text](<Pasted image 20250815150535.png>)
+![alt text](<lab2-assert/Pasted image 20250815150535.png>)
 
-![alt text](<Pasted image 20250815150551.png>)
+![alt text](<lab2-assert/Pasted image 20250815150551.png>)
 
 ---
 
@@ -346,7 +346,7 @@ make grade
 
 现在应当能看到 `trace` 与 `sysinfotest` 相关测试通过；其余与本 Lab 无关的会被跳过或已通过。实验页面也展示了 `trace` 的期望输出样例，可对照比对。
 
-![alt text](<Pasted image 20250815174926.png>)
+![alt text](<lab2-assert/Pasted image 20250815174926.png>)
 
 ---
 

@@ -119,7 +119,8 @@ exec(char *path, char **argv)
 - `make qemu`，启动后查看输出应该包含 `page table 0x...` 及递归打印的内容。
 - 运行打分：`./grade-lab-pgtbl pte printout`。出现 `pte printout: OK`通过。
 
-![alt text](<Pasted image 20250818173853.png>)
+
+![alt text](<lab3-assert/Pasted image 20250818173853.png>)
 
 ---
 
@@ -424,7 +425,7 @@ scheduler(void)
 - 完成后 `make qemu` -> 在 qemu shell 中运行 `usertests`，期待测试全通过（测试时间可能有点长）。
 
 
-![alt text](<Pasted image 20250818212439.png>)
+![alt text](<lab3-assert/Pasted image 20250818212439.png>)
 
 ---
 
@@ -651,9 +652,7 @@ usertests
 - 新增文件 `time.txt`写入实验用时和文件 `answers-pgtbl.txt` 回答实验中的两个提问
 - 运行 `make grade`
 
-
-![alt text](<Pasted image 20250826180136.png>)
-
+![alt text](<lab3-assert/Pasted image 20250826180136.png>)
 
 补充说明：
 
