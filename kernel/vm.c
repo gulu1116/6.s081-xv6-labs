@@ -5,6 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -91,24 +93,53 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
 // Look up a virtual address, return the physical address,
 // or 0 if not mapped.
 // Can only be used to look up user pages.
+// 确保在文件开头包含了必要的头文件
 uint64
 walkaddr(pagetable_t pagetable, uint64 va)
 {
   pte_t *pte;
   uint64 pa;
+  struct proc *p = myproc(); // 获取当前进程
 
   if(va >= MAXVA)
     return 0;
 
   pte = walk(pagetable, va, 0);
-  if(pte == 0)
-    return 0;
+
+  // 如果页表项不存在或无效，但地址在进程的堆空间内且不在栈下，则尝试分配内存
+  if(pte == 0 || (*pte & PTE_V) == 0) {
+    if (va >= p->sz || va <= PGROUNDDOWN(p->trapframe->sp)) {
+      return 0; // 非法地址
+    }
+    // 模拟页面错误处理程序：分配并映射页面
+    uint64 ka = (uint64)kalloc();
+    if(ka == 0) {
+      return 0; // 分配失败
+    }
+    memset((void*)ka, 0, PGSIZE);
+    va = PGROUNDDOWN(va);
+    if(mappages(pagetable, va, PGSIZE, ka, PTE_W|PTE_R|PTE_U) != 0) {
+      kfree((void*)ka);
+      return 0;
+    }
+    // 映射成功后，重新获取pte
+    pte = walk(pagetable, va, 0); // 或者直接计算物理地址 ka | (va & (PGSIZE-1))
+    if(pte == 0) {
+        return 0; // 理论上不会发生
+    }
+    // 注意：我们映射了整个页，所以需要返回该页内正确偏移的物理地址
+    pa = ka + (va & (PGSIZE-1)); // 计算实际物理地址
+    return pa;
+  }
+
+  // 原来的检查和处理
   if((*pte & PTE_V) == 0)
     return 0;
   if((*pte & PTE_U) == 0)
     return 0;
   pa = PTE2PA(*pte);
-  return pa;
+  // ... 后续的权限检查等保持不变 ...
+  return pa + (va & (PGSIZE-1)); // 返回对应的物理地址
 }
 
 // add a mapping to the kernel page table.
@@ -179,11 +210,13 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
   if((va % PGSIZE) != 0)
     panic("uvmunmap: not aligned");
 
-  for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
+  for(a = va; a < va + npages * PGSIZE; a += PGSIZE){
     if((pte = walk(pagetable, a, 0)) == 0)
-      panic("uvmunmap: walk");
+      // panic("uvmunmap: walk"); // 原来会panic
+      continue; // 改为跳过该页面
     if((*pte & PTE_V) == 0)
-      panic("uvmunmap: not mapped");
+      // panic("uvmunmap: not mapped"); // 原来会panic
+      continue; // 改为跳过该页面
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
     if(do_free){
@@ -315,9 +348,11 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
-      panic("uvmcopy: pte should exist");
+      // panic("uvmcopy: pte should exist");
+      continue; // 改为跳过该页面
     if((*pte & PTE_V) == 0)
-      panic("uvmcopy: page not present");
+      // panic("uvmcopy: page not present");
+      continue; // 改为跳过该页面
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)

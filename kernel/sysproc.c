@@ -43,13 +43,27 @@ sys_sbrk(void)
 {
   int addr;
   int n;
+  struct proc *p = myproc(); // 获取当前进程
 
   if(argint(0, &n) < 0)
     return -1;
-  addr = myproc()->sz;
-  if(growproc(n) < 0)
+  addr = p->sz; // 保存旧的进程大小
+
+  // 删除原有的 growproc() 调用
+  // if(growproc(n) < 0)
+  //   return -1;
+
+  if (n > 0) {
+    // 延迟分配：只增加进程的虚拟地址空间大小
+    p->sz += n;
+  } else if (p->sz + n > 0) {
+    // 如果 n 是负数，且收缩后大小仍大于0，则立即释放内存
+    p->sz = uvmdealloc(p->pagetable, p->sz, p->sz + n);
+  } else {
+    // 如果收缩到小于0，则返回错误
     return -1;
-  return addr;
+  }
+  return addr; // 返回旧的进程大小
 }
 
 uint64

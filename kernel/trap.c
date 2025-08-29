@@ -67,12 +67,44 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if (r_scause() == 13 || r_scause() == 15) {
+    // 处理页面错误 (13: load, 15: store)
+    uint64 va = r_stval();  // 获取引发错误的虚拟地址
+    struct proc *p = myproc();
+    uint64 ka;
+
+    // 检查错误地址的合法性：
+    // 1. 不能在进程已分配的内存范围之外 (va >= p->sz)
+    // 2. 不能在用户栈之下（包括栈保护页guard page）
+    if (va >= p->sz || va <= PGROUNDDOWN(p->trapframe->sp)) {
+      p->killed = 1;
+      goto end;
+    }
+
+    // 分配物理页面
+    ka = (uint64) kalloc();
+    if (ka == 0) {
+      // 物理内存耗尽
+      p->killed = 1;
+      goto end;
+    }
+
+    // 初始化物理页面为0
+    memset((void*)ka, 0, PGSIZE);
+
+    // 将虚拟地址向下舍入到页面边界并建立映射
+    va = PGROUNDDOWN(va);
+    if (mappages(p->pagetable, va, PGSIZE, ka, PTE_W | PTE_R | PTE_U) != 0) {
+      // 映射失败，释放物理页面并杀死进程
+      kfree((void*)ka);
+      p->killed = 1;
+    }
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
   }
-
+end:
   if(p->killed)
     exit(-1);
 
