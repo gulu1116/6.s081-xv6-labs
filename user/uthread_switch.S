@@ -1,11 +1,48 @@
-	.text
+    .text
+    .globl thread_switch
+/*
+ * save the old thread's registers into memory at a0 (old context)
+ * restore the new thread's registers from memory at a1 (new context)
+ *
+ * calling convention:
+ *   a0 -> pointer to old context (struct tcontext *)
+ *   a1 -> pointer to new context (struct tcontext *)
+ *
+ * We save ra, sp, s0..s11 from the current context into *a0,
+ * then load ra, sp, s0..s11 from *a1, and return (ret) to new ra.
+ */
 
-	/*
-         * save the old thread's registers,
-         * restore the new thread's registers.
-         */
-
-	.globl thread_switch
 thread_switch:
-	/* YOUR CODE HERE */
-	ret    /* return to ra */
+    /* save callee-saved regs + ra, sp into old context (at a0) */
+    sd ra, 0(a0)
+    sd sp, 8(a0)
+    sd s0, 16(a0)
+    sd s1, 24(a0)
+    sd s2, 32(a0)
+    sd s3, 40(a0)
+    sd s4, 48(a0)
+    sd s5, 56(a0)
+    sd s6, 64(a0)
+    sd s7, 72(a0)
+    sd s8, 80(a0)
+    sd s9, 88(a0)
+    sd s10, 96(a0)
+    sd s11, 104(a0)
+
+    /* restore registers from new context (at a1) */
+    ld ra, 0(a1)
+    ld sp, 8(a1)
+    ld s0, 16(a1)
+    ld s1, 24(a1)
+    ld s2, 32(a1)
+    ld s3, 40(a1)
+    ld s4, 48(a1)
+    ld s5, 56(a1)
+    ld s6, 64(a1)
+    ld s7, 72(a1)
+    ld s8, 80(a1)
+    ld s9, 88(a1)
+    ld s10, 96(a1)
+    ld s11, 104(a1)
+
+    ret

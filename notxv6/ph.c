@@ -8,6 +8,8 @@
 #define NBUCKET 5
 #define NKEYS 100000
 
+pthread_mutex_t lock[NBUCKET];  // 每个散列桶一个锁
+
 struct entry {
   int key;
   int value;
@@ -50,8 +52,10 @@ void put(int key, int value)
     // update the existing key.
     e->value = value;
   } else {
-    // the new is new.
+    // 新键，需要插入
+    pthread_mutex_lock(&lock[i]);  // 加锁
     insert(key, value, &table[i], table[i]);
+    pthread_mutex_unlock(&lock[i]);  // 解锁
   }
 }
 
@@ -113,6 +117,11 @@ main(int argc, char *argv[])
   assert(NKEYS % nthread == 0);
   for (int i = 0; i < NKEYS; i++) {
     keys[i] = random();
+  }
+
+  // 初始化锁
+  for (int i = 0; i < NBUCKET; i++) {
+    pthread_mutex_init(&lock[i], NULL);
   }
 
   //

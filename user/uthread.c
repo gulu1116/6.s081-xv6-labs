@@ -10,11 +10,30 @@
 #define STACK_SIZE  8192
 #define MAX_THREAD  4
 
+// 用户线程的上下文结构体（只保存 callee-saved 寄存器 + ra, sp）
+struct tcontext {
+  uint64 ra;
+  uint64 sp;
+
+  // callee-saved (s0..s11)
+  uint64 s0;
+  uint64 s1;
+  uint64 s2;
+  uint64 s3;
+  uint64 s4;
+  uint64 s5;
+  uint64 s6;
+  uint64 s7;
+  uint64 s8;
+  uint64 s9;
+  uint64 s10;
+  uint64 s11;
+};
 
 struct thread {
   char       stack[STACK_SIZE]; /* the thread's stack */
   int        state;             /* FREE, RUNNING, RUNNABLE */
-
+  struct tcontext context;      /* 用户线程上下文 */
 };
 struct thread all_thread[MAX_THREAD];
 struct thread *current_thread;
@@ -55,16 +74,17 @@ thread_schedule(void)
     exit(-1);
   }
 
+  /* example variables assumed: struct thread *current_thread, *next_thread, *t; */
   if (current_thread != next_thread) {         /* switch threads?  */
-    next_thread->state = RUNNING;
-    t = current_thread;
-    current_thread = next_thread;
-    /* YOUR CODE HERE
-     * Invoke thread_switch to switch from t to next_thread:
-     * thread_switch(??, ??);
-     */
-  } else
+    struct thread *old = current_thread;
+    struct thread *new = next_thread;
+
+    current_thread = new; /* set global to new before switching */
+    /* call assembly switch: save old into old->context, restore new from new->context */
+    thread_switch((uint64)&old->context, (uint64)&new->context);
+  } else {
     next_thread = 0;
+  }
 }
 
 void 
@@ -77,6 +97,12 @@ thread_create(void (*func)())
   }
   t->state = RUNNABLE;
   // YOUR CODE HERE
+
+  /* Example inside thread_create after allocating a free thread t */
+  t->context.ra = (uint64)func;                    // set return address to thread function
+  t->context.sp = (uint64)t->stack + STACK_SIZE;   // set stack pointer to top of thread's stack
+  /* You may zero other saved regs optionally */
+  t->state = RUNNABLE;
 }
 
 void 
