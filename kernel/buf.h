@@ -8,5 +8,6 @@ struct buf {
   struct buf *prev; // LRU cache list
   struct buf *next;
   uchar data[BSIZE];
+  uint timestamp; // 新增：记录最近一次释放/使用的 ticks
 };
 
