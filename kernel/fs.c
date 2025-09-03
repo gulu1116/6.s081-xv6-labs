@@ -380,28 +380,65 @@ bmap(struct inode *ip, uint bn)
   uint addr, *a;
   struct buf *bp;
 
+  // 1) direct blocks
   if(bn < NDIRECT){
-    if((addr = ip->addrs[bn]) == 0)
-      ip->addrs[bn] = addr = balloc(ip->dev);
+    if((addr = ip->addrs[bn]) == 0){
+      addr = balloc(ip->dev);
+      ip->addrs[bn] = addr;
+    }
     return addr;
   }
   bn -= NDIRECT;
 
+  // 2) single indirect
   if(bn < NINDIRECT){
-    // Load indirect block, allocating if necessary.
-    if((addr = ip->addrs[NDIRECT]) == 0)
+    // ip->addrs[NDIRECT] is single-indirect block
+    if((addr = ip->addrs[NDIRECT]) == 0){
       ip->addrs[NDIRECT] = addr = balloc(ip->dev);
-    bp = bread(ip->dev, addr);
+    }
+    bp = bread(ip->dev, ip->addrs[NDIRECT]);
     a = (uint*)bp->data;
     if((addr = a[bn]) == 0){
       a[bn] = addr = balloc(ip->dev);
-      log_write(bp);
+      log_write(bp);   // 写回间接块
+    }
+    brelse(bp);
+    return addr;
+  }
+  bn -= NINDIRECT;
+
+  // 3) double indirect
+  if(bn < NDINDIRECT) {
+    int level2_idx = bn / NADDR_PER_BLOCK;  // double-index block 中的位置（指向某个 single-indirect block）
+    int level1_idx = bn % NADDR_PER_BLOCK;  // 在该 single-indirect block 中的位置
+    // ip->addrs[NDIRECT + 1] is the double-indirect block
+    if((addr = ip->addrs[NDIRECT + 1]) == 0)
+      ip->addrs[NDIRECT + 1] = addr = balloc(ip->dev);
+
+    // 读出 double-indirect block
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+
+    // a[level2_idx] 是指向某个 single-indirect 块的地址
+    if((addr = a[level2_idx]) == 0) {
+      a[level2_idx] = addr = balloc(ip->dev);    // 分配 single-indirect block
+      log_write(bp);    // 修改 double-indirect block，要写回
+    }
+    brelse(bp);
+
+    // 读出那块 single-indirect block
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+    if((addr = a[level1_idx]) == 0) {
+      a[level1_idx] = addr = balloc(ip->dev);   // 分配数据块
+      log_write(bp);    // 写回 single-indirect 块
     }
     brelse(bp);
     return addr;
   }
 
   panic("bmap: out of range");
+  return 0;
 }
 
 // Truncate inode (discard contents).
@@ -413,6 +450,7 @@ itrunc(struct inode *ip)
   struct buf *bp;
   uint *a;
 
+  // 释放 direct 块
   for(i = 0; i < NDIRECT; i++){
     if(ip->addrs[i]){
       bfree(ip->dev, ip->addrs[i]);
@@ -420,16 +458,41 @@ itrunc(struct inode *ip)
     }
   }
 
+  // 释放 single indirect 块（ip->addrs[NDIRECT]）
   if(ip->addrs[NDIRECT]){
     bp = bread(ip->dev, ip->addrs[NDIRECT]);
     a = (uint*)bp->data;
-    for(j = 0; j < NINDIRECT; j++){
-      if(a[j])
-        bfree(ip->dev, a[j]);
+    for(i = 0; i < NADDR_PER_BLOCK; i++){
+      if(a[i])
+        bfree(ip->dev, a[i]);
     }
     brelse(bp);
     bfree(ip->dev, ip->addrs[NDIRECT]);
     ip->addrs[NDIRECT] = 0;
+  }
+
+  // 释放 double indirect 的全部内容（ip->addrs[NDIRECT+1]）
+  struct buf* bp1;
+  uint* a1;
+  if(ip->addrs[NDIRECT + 1]) {
+    bp = bread(ip->dev, ip->addrs[NDIRECT + 1]);
+    a = (uint*)bp->data;
+    for(i = 0; i < NADDR_PER_BLOCK; i++) {
+      if(a[i]) {
+        // a[i] 指向某个 single-indirect 块
+        bp1 = bread(ip->dev, a[i]);
+        a1 = (uint*)bp1->data;
+        for(j = 0; j < NADDR_PER_BLOCK; j++) {
+          if(a1[j])
+            bfree(ip->dev, a1[j]);  // 释放 data 块
+        }
+        brelse(bp1);
+        bfree(ip->dev, a[i]);       // 释放该 single-indirect 块
+      }
+    }
+    brelse(bp);
+    bfree(ip->dev, ip->addrs[NDIRECT + 1]); // 释放 double-indirect 块本身
+    ip->addrs[NDIRECT + 1] = 0;
   }
 
   ip->size = 0;
