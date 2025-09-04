@@ -185,3 +185,14 @@ void            virtio_disk_intr(void);
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x)/sizeof((x)[0]))
+
+
+// sys_mmap/munmap
+uint64 sys_mmap(void);
+uint64 sys_munmap(void);
+
+// VMA & mmap helpers（稍后实现）
+struct vma;
+struct vma* vma_lookup(struct proc *p, uint64 va);
+int do_munmap(struct proc *p, uint64 addr, uint64 len);
+int mmap_handle_pgfault(uint64 va);

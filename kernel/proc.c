@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fcntl.h"
 
 struct cpu cpus[NCPU];
 
@@ -280,6 +281,17 @@ fork(void)
     release(&np->lock);
     return -1;
   }
+
+  // 复制父进程的 VMA 数组到子进程
+  for (int i = 0; i < NVMA; i++) {
+    if (p->vmas[i].used) {
+      // 复制 VMA 结构体
+      np->vmas[i] = p->vmas[i];
+      // 增加被映射文件的引用计数！
+      filedup(np->vmas[i].file);
+    }
+  }
+
   np->sz = p->sz;
 
   np->parent = p;
@@ -350,6 +362,24 @@ exit(int status)
       struct file *f = p->ofile[fd];
       fileclose(f);
       p->ofile[fd] = 0;
+    }
+  }
+
+  // 新增：遍历并清理所有 VMA
+  for (int i = 0; i < NVMA; i++) {
+    if (p->vmas[i].used) {
+      // 计算需要解除的页数
+      uint64 npages = p->vmas[i].length / PGSIZE;
+      // 如果是共享映射，写回文件
+      if (p->vmas[i].flags & MAP_SHARED) {
+        filewrite(p->vmas[i].file, p->vmas[i].addr, p->vmas[i].length);
+      }
+      // 解除页表映射并释放物理页
+      uvmunmap(p->pagetable, p->vmas[i].addr, npages, 1);
+      // 关闭文件
+      fileclose(p->vmas[i].file);
+      // 标记 VMA 为空闲
+      p->vmas[i].used = 0;
     }
   }
 

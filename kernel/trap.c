@@ -3,8 +3,12 @@
 #include "memlayout.h"
 #include "riscv.h"
 #include "spinlock.h"
+#include "sleeplock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fs.h"
+#include "file.h"
+#include "fcntl.h" // 需要包含这些头文件以使用文件相关函数
 
 struct spinlock tickslock;
 uint ticks;
@@ -68,9 +72,81 @@ usertrap(void)
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
-    printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
-    printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
-    p->killed = 1;
+    // 处理其他异常，主要是缺页异常
+    uint64 va = r_stval(); // 获取引发缺页的虚拟地址
+
+    // 关键：检查缺页地址是否可能属于一个 mmap 区域
+    if (va >= p->sz || va < p->trapframe->sp) {
+      // 地址超出进程大小或低于栈顶，是非法访问
+      p->killed = 1;
+      goto end;
+    }
+
+    // 将对齐到页面起始地址
+    va = PGROUNDDOWN(va);
+
+    // 遍历进程的所有 VMA，检查 va 是否落在某个 VMA 区间内
+    struct vma *vma = 0;
+    for (int i = 0; i < NVMA; i++) {
+      if (p->vmas[i].used &&
+          va >= p->vmas[i].addr &&
+          va < p->vmas[i].addr + p->vmas[i].length) {
+        vma = &p->vmas[i];
+        break;
+      }
+    }
+
+    if (vma == 0) {
+      // 该地址不属于任何 mmap 区域，是非法访问
+      p->killed = 1;
+      goto end;
+    }
+
+    // 现在我们知道这是一个合法的 mmap 缺页
+    // 1. 分配一个物理页
+    char *mem = kalloc();
+    if(mem == 0){
+      p->killed = 1; // 内存分配失败，杀死进程
+      goto end;
+    }
+    memset(mem, 0, PGSIZE); // 清零新页面（可选，但更安全）
+
+    // 2. 计算文件中需要读取的偏移量
+    //    va 在 VMA 中的偏移 = va - vma->addr
+    //    文件中的偏移 = vma->offset + (va - vma->addr)
+    uint64 file_offset = vma->offset + (va - vma->addr);
+    
+    // 3. 将文件内容读取到新分配的物理页
+    ilock(vma->file->ip);
+    int read_bytes = readi(vma->file->ip, 0, (uint64)mem, file_offset, PGSIZE);
+    iunlock(vma->file->ip);
+
+    if(read_bytes < 0){
+      // 文件读取失败，清理并杀死进程
+      kfree(mem);
+      p->killed = 1;
+      goto end;
+    }
+    // 如果 read_bytes < PGSIZE，页面剩余部分已经是零（因为memset）
+
+    // 4. 根据 VMA 的权限设置 PTE 的标志位
+    int pte_flags = PTE_U; // 用户模式可访问是必须的
+    if(vma->prot & PROT_READ)  pte_flags |= PTE_R;
+    if(vma->prot & PROT_WRITE) pte_flags |= PTE_W;
+    if(vma->prot & PROT_EXEC)  pte_flags |= PTE_X;
+    // 注意：即使 VMA 可写，文件也可能以只读打开。
+    // 但对于 MAP_PRIVATE，我们仍然需要在 PTE 中保留可写权限以供进程修改私有副本。
+    // 我们的参数检查已经确保了 MAP_SHARED 且 PROT_WRITE 时文件是可写的。
+
+    // 5. 将物理页映射到用户的页表中
+    if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, pte_flags) != 0){
+      // 映射失败（例如页表分配失败），清理并杀死进程
+      kfree(mem);
+      p->killed = 1;
+    }
+
+  end:
+    ;
   }
 
   if(p->killed)
