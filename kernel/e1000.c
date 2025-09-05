@@ -95,26 +95,103 @@ e1000_init(uint32 *xregs)
 int
 e1000_transmit(struct mbuf *m)
 {
-  //
-  // Your code here.
-  //
-  // the mbuf contains an ethernet frame; program it into
-  // the TX descriptor ring so that the e1000 sends it. Stash
-  // a pointer so that it can be freed after sending.
-  //
-  
+  uint32 tdt;
+  // 并发安全，保护对环和寄存器的访问
+  acquire(&e1000_lock);
+
+  // 1) 读网卡期望的下一个 TX 索引（TDT）
+  tdt = regs[E1000_TDT];
+
+  // 2) 检查对应的描述符是否已完成（DD = 1），如果没有，说明环已满
+  if (!(tx_ring[tdt].status & E1000_TXD_STAT_DD)) {
+    // 无可用描述符：失败，调用者会释放 mbuf
+    release(&e1000_lock);
+    return -1;
+  }
+
+  // 3) 如果该槽之前保存了一个 mbuf，说明之前发送已完成，但尚未释放，释放它
+  if (tx_mbufs[tdt]) {
+    mbuffree(tx_mbufs[tdt]);
+    tx_mbufs[tdt] = 0;
+  }
+
+  // 4) 填充描述符：地址、长度、cmd
+  //    m->head 指向包数据，m->len 是长度
+  tx_ring[tdt].addr = (uint64) m->head;
+  tx_ring[tdt].length = m->len;
+
+  // 设置需要的命令位（要求报告完成 RS；包结束 EOP）
+  tx_ring[tdt].cmd = E1000_TXD_CMD_RS | E1000_TXD_CMD_EOP;
+
+  // 清除 status（网卡会在完成后写回 DD）
+  tx_ring[tdt].status = 0;
+
+  // 保存 mbuf 指针，稍后网卡驱动在 descriptor DD 置位时会释放
+  tx_mbufs[tdt] = m;
+
+  // 5) 更新 TDT，通知网卡新的尾索引（取模 TX_RING_SIZE）
+  regs[E1000_TDT] = (tdt + 1) % TX_RING_SIZE;
+
+  // 6) 内存屏障（确保对描述符的写在写 TDT 之前完成）
+  __sync_synchronize();
+
+  release(&e1000_lock);
   return 0;
 }
 
 static void
 e1000_recv(void)
 {
-  //
-  // Your code here.
-  //
-  // Check for packets that have arrived from the e1000
-  // Create and deliver an mbuf for each packet (using net_rx()).
-  //
+  acquire(&e1000_lock);
+
+  // 循环处理所有已到达、还未处理的描述符
+  while (1) {
+    // 网卡的 RDT 指向最后一个驱动通知给网卡的已空 descriptor。
+    // 下一个有数据（如果有）的 descriptor 索引是 RDT + 1 (mod RX_RING_SIZE)
+    uint32 rdt = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+
+    // 检查该描述符是否已由网卡写入完（DD）
+    if (!(rx_ring[rdt].status & E1000_RXD_STAT_DD)) {
+      // 没有更多接收包
+      break;
+    }
+
+    // 取出对应的 mbuf，设置长度，由网卡写回的 length 字段给出
+    struct mbuf *m = rx_mbufs[rdt];
+    if (!m) {
+      // 不应该发生：如果没有 mbuf 就 panic
+      panic("e1000_recv: missing mbuf");
+    }
+
+    // rx descriptor 的 length 字段包含接收到的包长
+    m->len = rx_ring[rdt].length;
+
+    // 为该 slot 分配一个新的 mbuf 以供网卡下次接收使用
+    struct mbuf *newm = mbufalloc(0);
+    if (!newm) {
+      // 分配失败：无法继续接收。为了安全起见 panic（也可以 free 原 mbuf 并退出循环）
+      panic("e1000_recv: mbufalloc failed");
+    }
+
+    // 把新的 mbuf 放回 descriptor，并清除 status
+    rx_mbufs[rdt] = newm;
+    rx_ring[rdt].addr = (uint64)newm->head;
+    rx_ring[rdt].status = 0;
+
+    // 更新 RDT 为刚刚处理的这个索引，告诉网卡这个 descriptor 已经可用
+    regs[E1000_RDT] = rdt;
+
+    // 内存屏障，确保写回 RDT 在前面的 descriptor 写完成后对网卡可见
+    __sync_synchronize();
+
+    // 先释放锁再把包提交给网络栈（net_rx 可能会产生调度/阻塞）
+    release(&e1000_lock);
+    net_rx(m);
+    // 处理完后重新获取锁，继续循环处理更多包
+    acquire(&e1000_lock);
+  }
+
+  release(&e1000_lock);
 }
 
 void
